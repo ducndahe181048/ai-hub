@@ -1,6 +1,8 @@
 import React from 'react'
 
 function GioiThieu() {
+    const date = new Date(Date.now()).toLocaleDateString('vi-VN', { year: 'numeric', month: 'long', day: 'numeric' });
+
     return (
         <div>
             <div style={{ padding: '20px', textAlign: 'left', margin: '20px' }}>
@@ -25,7 +27,7 @@ function GioiThieu() {
                     </div>
                     <div>
                         <h6>Lần cập nhật gần nhất</h6>
-                        <p>???</p>
+                        <p>{date}</p>
                     </div>
                 </div>
             </div>
