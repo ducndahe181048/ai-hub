@@ -26,7 +26,7 @@ function Homepage2() {
                             <Container>
                                 <Row>
                                     <Col md={1}>
-                                        <img src={speechToTextImage} alt='speech to text' roundedCircle />
+                                        <img src={speechToTextImage} alt='speech to text' />
                                     </Col>
 
                                     <Col md={11}>

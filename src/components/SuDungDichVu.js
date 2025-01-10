@@ -1,14 +1,17 @@
 import React, { useState } from 'react'
 import { Button, Col, Container, Row } from 'react-bootstrap'
-import audio1 from '../assets/audio.wav'
-import audio2 from '../assets/FPTOpenSpeechData_Set001_V0.1_000001.wav'
+import audio1 from '../assets/audio_test_1.wav'
+import audio2 from '../assets/audio_test_2.wav'
 
 function SuDungDichVu() {
-    const [audioSrc, setAudioSrc] = useState('');
+    const [audioSrc, setAudioSrc] = useState(null);
+    const [fileName, setFileName] = useState('');
     const [isRecording, setIsRecording] = useState(false);
+    const [mediaRecorder, setMediaRecorder] = useState(null);
 
-    const handleAudioChange = (src) => {
-        setAudioSrc(src);
+    const handleFileAudioChange = (e, name) => {
+        setAudioSrc(e);
+        setFileName(name);
     }
 
     const handleFileUpload = (e) => {
@@ -16,42 +19,50 @@ function SuDungDichVu() {
         if (file && file.type === 'audio/wav') {
             const src = URL.createObjectURL(file);
             setAudioSrc(src);
+            setFileName(file.name);
         } else {
             alert('File không hợp lệ! Vui lòng chọn file có định dạng .wav.');
         }
-    }
+    };
 
     const handleRecordAudio = () => {
-        navigator.mediaDevices.getUserMedia({ 
-            // audio: true,
+        navigator.mediaDevices.getUserMedia({
             audio: {
                 echoCancellation: true,
                 noiseSuppression: true,
-                sampleRate: 16000
-            }
-         })
+                sampleRate: 16000,
+            },
+        })
             .then(stream => {
-                const mediaRecorder = new MediaRecorder(stream);
-                mediaRecorder.start();
+                const recorder = new MediaRecorder(stream);
+                setMediaRecorder(recorder);
 
                 const audioChunks = [];
-                mediaRecorder.addEventListener('dataavailable', event => {
+                recorder.addEventListener('dataavailable', event => {
                     audioChunks.push(event.data);
                 });
 
-                mediaRecorder.addEventListener('stop', () => {
-                    const audioBlob = new Blob(audioChunks);
+                recorder.addEventListener('stop', () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
                     const audioUrl = URL.createObjectURL(audioBlob);
                     setAudioSrc(audioUrl);
+                    setFileName('Nghe lại giọng nói của bạn');
+                    setIsRecording(false);
                 });
 
-                setTimeout(() => {
-                    mediaRecorder.stop();
-                }, 5000); // Record for 5 seconds
+                recorder.start();
+                setIsRecording(true);
             })
             .catch(error => {
                 alert('Hãy bật quyền truy cập microphone để có thể sử dụng tính năng này!', error);
             });
+    };
+
+    const handleStopRecord = () => {
+        if (mediaRecorder) {
+            mediaRecorder.stop();
+            setMediaRecorder(null);
+        }
     };
 
     return (
@@ -78,7 +89,7 @@ function SuDungDichVu() {
                             <Col md={5}>
                                 <h6>Chọn nguồn âm thanh - File (.wav) upload dung lượng không quá 20MB</h6>
                                 <div style={{ padding: '10px' }}>
-                                    <Button onClick={() => handleRecordAudio()} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">
+                                    <Button onClick={isRecording ? handleStopRecord : handleRecordAudio} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">
                                         {isRecording ? 'Dừng ghi âm' : 'Ghi âm giọng nói'}
                                     </Button>
                                     <input
@@ -96,13 +107,13 @@ function SuDungDichVu() {
                                             Tải file âm thanh
                                         </Button>
                                     </label>
-                                    <Button onClick={() => handleAudioChange(audio1)} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">File mẫu 1</Button>
-                                    <Button onClick={() => handleAudioChange(audio2)} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">File mẫu 2</Button>
+                                    <Button onClick={() => handleFileAudioChange(audio1, 'audio_test_1.wav')} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">File mẫu 1</Button>
+                                    <Button onClick={() => handleFileAudioChange(audio2, 'audio_test_2.wav')} style={{ backgroundColor: 'rgb(0, 200, 255)', border: 'none', margin: '10px' }} variant="primary">File mẫu 2</Button>
                                 </div>
                             </Col>
 
                             <Col md={6}>
-                                <h6>Âm thanh</h6>
+                                <h6>Âm thanh ({fileName || "Hãy chọn file âm thanh"})</h6>
                                 <audio controls style={{ width: '100%' }} src={audioSrc} autoPlay={true}></audio>
                             </Col>
                         </Row>
