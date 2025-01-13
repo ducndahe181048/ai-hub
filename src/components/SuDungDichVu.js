@@ -12,6 +12,7 @@ function SuDungDichVu() {
 
     const handleFileAudioChange = async (e, name) => {
         setFileName(name);
+        setTranscribedText('Đang nhận dạng...');
         
         // For sample audio, fetch the audio content as a Blob
         if (typeof e === 'string') {  // If e is a string (e.g., URL)
@@ -31,6 +32,7 @@ function SuDungDichVu() {
             const src = URL.createObjectURL(file);
             setAudioSrc(src);
             setFileName(file.name);
+            setTranscribedText('Đang nhận dạng...');
             // Transcribe the uploaded audio
             transcribeAudio(file);
         } else {
