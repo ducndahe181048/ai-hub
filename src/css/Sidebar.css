@@ -1,0 +1,33 @@
+.sidebar {
+    width: 15%;
+    height: 100vh;
+    background-color: #f4f4f4;
+    padding: 20px;
+    position: fixed;
+    left: 0;
+    top: 0;
+}
+
+.sidebar-image {
+    width: 80%;
+    padding: 20px;
+    margin: 0 auto;
+    display: block;
+}
+
+.sidebar-button {
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+    }
+
+    .sidebar-image {
+        width: 50%;
+    }
+}

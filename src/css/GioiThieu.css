@@ -1,0 +1,28 @@
+.gioi-thieu .content {
+    padding: 20px;
+    text-align: left;
+    margin: 20px;
+}
+
+.bold {
+    font-weight: bold;
+}
+
+.footer {
+    display: flex;
+    justify-content: space-between;
+}
+
+.highlight {
+    color: rgba(0, 82, 204, 1);
+}
+
+@media (max-width: 768px) {
+    .footer {
+        flex-direction: column;
+    }
+
+    .footer > div {
+        margin-bottom: 10px;
+    }
+}

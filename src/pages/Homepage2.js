@@ -3,7 +3,6 @@ import GioiThieu from '../components/GioiThieu';
 import SuDungDichVu from '../components/SuDungDichVu';
 import TaiLieuTichHopPhanMem from '../components/TaiLieuTichHopPhanMem';
 import { Container, Row, Col } from 'react-bootstrap';
-import speechToTextImage from '../assets/speech_to_text_image.png';
 import Sidebar from '../components/Sidebar';
 
 function Homepage2() {
@@ -25,11 +24,7 @@ function Homepage2() {
                         <div style={{ padding: '20px', textAlign: 'left', margin: '20px' }}>
                             <Container>
                                 <Row>
-                                    <Col md={1}>
-                                        <img src={speechToTextImage} alt='speech to text' />
-                                    </Col>
-
-                                    <Col md={11}>
+                                    <Col>
                                         <h6>Chuyển đổi giọng nói thành văn bản</h6>
                                         <p style={{ color: 'gray' }}>Dịch vụ Chuyển đổi giọng nói thành văn bản</p>
                                     </Col>
