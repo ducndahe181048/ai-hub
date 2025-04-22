@@ -1,0 +1,13 @@
+flask
+flask-cors
+python-dotenv
+pydub
+librosa
+soundfile
+torch
+transformers
+torchaudio
+pyngrok
+scipy
+requests
+pyannote.audio
