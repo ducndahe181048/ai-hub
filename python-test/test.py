@@ -1,48 +1,57 @@
-from dotenv import load_dotenv
-load_dotenv()
-from pyannote.audio import Pipeline
-from pyannote.core import Segment, Annotation
-import librosa
-import soundfile as sf
-from transformers import SpeechEncoderDecoderModel
-from transformers import AutoFeatureExtractor, AutoTokenizer, GenerationConfig
-import torchaudio
-import torch
 import os
-import numpy as np
-import soundfile as sf
-import argparse
-import json
-import requests
 import gc
-from pydub import AudioSegment
-
-from pydub.silence import detect_nonsilent, split_on_silence
-from scipy import signal
+import json
+import logging
+import torch
+import librosa
+import numpy as np
+import torchaudio
+import soundfile as sf
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from pydub import AudioSegment
+from pydub.silence import detect_nonsilent
+from pyannote.audio import Pipeline
+from pyannote.core import Annotation
+from transformers import SpeechEncoderDecoderModel, AutoFeatureExtractor, AutoTokenizer, GenerationConfig
 from pyngrok import ngrok, conf
 
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
 app = Flask(__name__)
-CORS(app, resources={r"/speech-to-text": {"origins": "*"}})
+CORS(app, resources={r"/speech-to-text": {"origins": ["http://localhost:3000", "https://yourdomain.com"]}})
 
 # Ngrok setup
-pyngrok_config = conf.PyngrokConfig(ngrok_path="C:/ngrok/ngrok.exe", config_path="C:/ngrok/ngrok.yml")
-public_url = ngrok.connect(5000, pyngrok_config=pyngrok_config)
-print(f"Ngrok public URL: {public_url}")  
+# NGROK_PATH = os.getenv("NGROK_PATH", "ngrok")
+# NGROK_CONFIG = os.getenv("NGROK_CONFIG", "ngrok.yml")
+# pyngrok_config = conf.PyngrokConfig(ngrok_path=NGROK_PATH, config_path=NGROK_CONFIG)
+# public_url = ngrok.connect(5000)
+# logger.info(f"Ngrok public URL: {public_url}")
 
-model_path = 'nguyenvulebinh/wav2vec2-bartpho'
-model = SpeechEncoderDecoderModel.from_pretrained(model_path).eval()
-feature_extractor = AutoFeatureExtractor.from_pretrained(model_path)
-tokenizer = AutoTokenizer.from_pretrained(model_path)
+# Model initialization
+MODEL_PATH = 'nguyenvulebinh/wav2vec2-bartpho'
+model = SpeechEncoderDecoderModel.from_pretrained(MODEL_PATH).eval()
+feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_PATH)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
 
 HF_TOKEN = os.getenv("HF_TOKEN")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+diarization_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=HF_TOKEN).to(device)
 
-diarization_pipeline = Pipeline.from_pretrained(
-    "pyannote/speaker-diarization-3.1",
-    use_auth_token=HF_TOKEN
-)
-diarization_pipeline.to(torch.device("cuda"))
+# Global variables
+speaker_transcript = ""
+speech_segments = []
+MIN_DURATION = 0.2
+MIN_SEGMENT_LENGTH = 2048
+ALLOWED_EXTENSIONS = {'.wav', '.mp3', '.flac'}
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+
 def normalize_audio(audio_tensor):
     """Normalize audio tensor to range [-1, 1]."""
     return audio_tensor / torch.max(torch.abs(audio_tensor))
@@ -51,41 +60,29 @@ def spectral_gating(audio_tensor, threshold=0.01):
     """Apply spectral gating to the audio tensor."""
     stft = librosa.stft(audio_tensor)
     magnitude, phase = np.abs(stft), np.angle(stft)
-    
-    # Apply the threshold for spectral gating
     magnitude[magnitude < threshold] = 0
-    
-    # Reconstruct the STFT with the modified magnitude
     denoised_stft = magnitude * np.exp(1j * phase)
-    
-    # Inverse STFT to get back to time domain
-    denoised_audio = librosa.istft(denoised_stft)
-    return denoised_audio
+    return librosa.istft(denoised_stft)
 
 def format_seconds_to_mm_ss(seconds):
+    """Convert seconds to MM:SS format."""
     minutes = int(seconds // 60)
     seconds = int(seconds % 60)
     return f"{minutes:02}:{seconds:02}"
 
 def convert_to_mono(audio_path):
-    # Read the audio file
+    """Convert audio to mono if it is stereo."""
     audio_data, sample_rate = sf.read(audio_path)
-
-    # Check if the audio is stereo
-    if audio_data.ndim == 2:  # Stereo audio has 2 dimensions
-        # Convert to mono by averaging the channels
-        audio_data = audio_data.mean(axis=1)  # Average the channels
-
+    if audio_data.ndim == 2:
+        audio_data = audio_data.mean(axis=1)
     return audio_data, sample_rate
 
-# Decode token function
 def decode_tokens(token_ids, skip_special_tokens=True, time_precision=0.02):
+    """Decode token IDs to text, handling timestamps."""
     timestamp_begin = tokenizer.vocab_size
     outputs = [[]]
     for token in token_ids:
         if token >= timestamp_begin:
-            #timestamp = f" |{(token - timestamp_begin) * time_precision:.2f}| "
-            #outputs.append(timestamp)
             outputs.append([])
         else:
             outputs[-1].append(token)
@@ -94,9 +91,8 @@ def decode_tokens(token_ids, skip_special_tokens=True, time_precision=0.02):
     ]
     return "".join(outputs).replace("< |", "<|").replace("| >", "|>").replace("> <", ". ").replace("<", "").replace(">", "")
 
-
-# Decode wav function
 def decode_wav(audio_wavs, prefix=""):
+    """Decode audio waveforms to text."""
     device = next(model.parameters()).device
     input_values = feature_extractor.pad(
         [{"input_values": feature} for feature in audio_wavs],
@@ -119,13 +115,12 @@ def decode_wav(audio_wavs, prefix=""):
         length_penalty=0.8,
         return_dict_in_generate=True,
         output_scores=True,
-        
     )
 
-    output_text = [decode_tokens(sequence) for sequence in output_beam_ids.sequences]
-    return output_text
+    return [decode_tokens(sequence) for sequence in output_beam_ids.sequences]
 
 def filter_short_segments(annotation, min_duration=0.3):
+    """Filter out short segments from diarization annotation."""
     filtered = Annotation()
     for segment, track, label in annotation.itertracks(yield_label=True):
         if segment.duration >= min_duration:
@@ -133,141 +128,135 @@ def filter_short_segments(annotation, min_duration=0.3):
     return filtered
 
 def trim_silence(audio_file, silence_thresh=-45, min_silence_len=100, padding=80):
-    # Load the audio file
+    """Trim silence from audio file."""
     audio = AudioSegment.from_file(audio_file)
-    
-    # Detect non-silent parts
     nonsilent_ranges = detect_nonsilent(audio, min_silence_len=min_silence_len, silence_thresh=silence_thresh)
-    
-    # Trim the audio to the detected non-silent parts
     if nonsilent_ranges:
         start = max(0, nonsilent_ranges[0][0] - padding)
         end = min(len(audio), nonsilent_ranges[-1][1] + padding)
-        trimmed_audio = audio[start:end]
-        return trimmed_audio
-    else:
-        return audio  # If no speech is detected, return the original
+        return audio[start:end]
+    return audio
 
-# Initialize transcript
-speaker_transcript = ""
-speech_segments = []
-min_duration = 0.2
+def process_segment(audio_path, start, end, target_sr=16000):
+    """Extract and resample a segment from an audio file."""
+    with sf.SoundFile(audio_path) as f:
+        f.seek(int(start * f.samplerate))
+        samples = f.read(int((end - start) * f.samplerate))
+        samples = librosa.to_mono(samples.T)
+        return librosa.resample(samples, orig_sr=f.samplerate, target_sr=target_sr)
+
 def diarize_audio(audio_path):
-    """Diarize the audio and return speaker segments."""
-    trimmed_audio = trim_silence(audio_path)
-    trimmed_audio.export(audio_path, format="wav")
-    diarization = diarization_pipeline(audio_path, num_speakers=2)
-    speaker_segments = []
+    """
+    Diarize an audio file to identify speaker segments.
+    
+    Args:
+        audio_path (str): Path to the input audio file.
+    
+    Returns:
+        list: List of tuples (start_time, end_time, speaker_label).
+    
+    Raises:
+        RuntimeError: If diarization fails.
+    """
+    try:
+        trimmed_audio = trim_silence(audio_path)
+        trimmed_audio.export(audio_path, format="wav")
+        diarization = diarization_pipeline(audio_path, num_speakers=2)
+        speaker_segments = []
+        for segment, _, speaker in diarization.itertracks(yield_label=True):
+            if segment.duration >= MIN_DURATION:
+                speaker_segments.append((segment.start, segment.end, speaker))
+                logger.info(f"Speaker {speaker} from {segment.start:.1f}s to {segment.end:.1f}s")
+        return sorted(speaker_segments, key=lambda x: x[0])
+    except Exception as e:
+        logger.error(f"Diarization error: {str(e)}")
+        raise RuntimeError(f"Error during diarization: {str(e)}")
 
-    # Collect speaker segments with start/end times and speaker labels
-    for segment, _, speaker in diarization.itertracks(yield_label=True):
-        duration = segment.end - segment.start
-        if duration >= min_duration:
-            speaker_segments.append((segment.start, segment.end, speaker))
-            print(f"Speaker {speaker} from {segment.start:.1f}s to {segment.end:.1f}s")
-    # Sort by start time to ensure proper processing
-    # Merge consecutive segments until the speaker changes
-    '''
-    merged_segments = []
-    current_speaker = None
-    current_start = None
-    current_end = None
-
-    for start, end, speaker in speaker_segments:
-        if speaker == current_speaker:
-            # Extend the current segment
-            current_end = end
-        else:
-            # Save the previous segment and start a new one
-            if current_speaker is not None:
-                merged_segments.append((current_start, current_end, current_speaker))
-            current_speaker = speaker
-            current_start = start
-            current_end = end
-
-    # Add the last segment
-    if current_speaker is not None:
-        merged_segments.append((current_start, current_end, current_speaker))
-
-    # Print the merged results
-    for start, end, speaker in merged_segments:
-        print(f"Merged: Speaker {speaker} from {start:.1f}s to {end:.1f}s")
-    '''    
-        
-    return speaker_segments
-
-# Step 2: Process in-memory segments for ASR without saving files
-def process_segments_in_memory(audio_path, speaker_segments):
+def process_segments_in_memory(audio_path, speaker_segments, batch_size=10):
+    """
+    Process speaker segments in memory and transcribe them.
+    
+    Args:
+        audio_path (str): Path to the input audio file.
+        speaker_segments (list): List of (start, end, speaker) tuples.
+        batch_size (int): Number of segments to process in a batch.
+    """
     global speaker_transcript, speech_segments
-    """Process each speaker segment directly from the audio without saving to file."""
-    # Load the entire audio file once
-    audio, sr = librosa.load(audio_path, sr=None)
-    audio_mono = librosa.to_mono(audio)
-    min_segment_length = 2048
+    audio_data_batch = []
+    batch_info = []
+
     for start, end, speaker in speaker_segments:
-        # Convert start and end times to sample indices
-        start_sample = int(start * sr)
-        end_sample = int(end * sr)
+        segment_16k = process_segment(audio_path, start, end)
+        if len(segment_16k) >= MIN_SEGMENT_LENGTH:
+            audio_data_batch.append(segment_16k)
+            batch_info.append((start, end, speaker))
+        
+        if len(audio_data_batch) >= batch_size or (start == speaker_segments[-1][0] and audio_data_batch):
+            transcriptions = decode_wav(audio_data_batch)
+            for (start, end, speaker), transcription in zip(batch_info, transcriptions):
+                if transcription.strip():
+                    speech_segments.append({
+                        "start_time": start,
+                        "end_time": end,
+                        "speaker": speaker,
+                        "text": transcription
+                    })
+                    speaker_transcript += f"({format_seconds_to_mm_ss(end - start)}): {transcription} "
+            audio_data_batch = []
+            batch_info = []
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        # Extract the segment corresponding to the current speaker
-        segment = audio_mono[start_sample:end_sample]
+def save_uploaded_file(file):
+    """Save the uploaded file to a temporary path."""
+    audio_path = "temp_audio.wav"
+    file.save(audio_path)
+    return audio_path
 
-        # Resample to 16kHz (Wav2Vec2 expects 16kHz audio)
-        segment_16k = librosa.resample(segment, orig_sr=sr, target_sr=16000)
-        #segment_16k = spectral_gating(segment_16k)
-        if len(segment_16k) < min_segment_length:
-            continue
-        if len(segment_16k) > 0:
-            audio_data = [segment_16k]  # Wrap the chunk in a list
-            # Process the current chunk
-            transcript_chunk = decode_wav(audio_data)
-            transcription = " ".join(transcript_chunk) + " "
-            if len(transcription.strip()) > 0:
-                speech_segments.append({
-                    "start_time": start,
-                    "end_time": end,
-                    "speaker": speaker,
-                    "text": transcription
-                })
-                speaker_transcript += f"({format_seconds_to_mm_ss(end - start)}): {transcription}"
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+def clean_up(audio_path):
+    """Remove temporary audio file."""
+    if os.path.exists(audio_path):
+        os.remove(audio_path)
 
 @app.route('/speech-to-text', methods=['POST'])
 def speech_to_text():
-    global speaker_transcript, speech_segments
+    """
+    Handle speech-to-text conversion for uploaded audio files.
     
-    # Reset the global variables at the start of each request
+    Returns:
+        JSON response with transcript and segments or error message.
+    """
+    global speaker_transcript, speech_segments
     speaker_transcript = ""
     speech_segments = []
-    
-    if 'file' not in request.files:
-        return "No file part", 400
-    file = request.files.get('file')
-    if file.filename == '':
-        return "No selected file", 400
+
+    if 'file' not in request.files or request.files['file'].filename == '':
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['file']
+    if not os.path.splitext(file.filename)[1].lower() in ALLOWED_EXTENSIONS:
+        return jsonify({'error': 'Invalid file format. Only WAV, MP3, or FLAC allowed.'}), 400
+
+    if len(file.read()) > MAX_FILE_SIZE:
+        return jsonify({'error': 'File size exceeds 100MB limit.'}), 400
+    file.seek(0)
 
     try:
-        # Save the uploaded file temporarily
-        audio_path = "temp_audio.wav"
-        file.save(audio_path)
-        
-        # Perform diarization to get speaker segments
+        audio_path = save_uploaded_file(file)
         speaker_segments = diarize_audio(audio_path)
-        
-        # Process each segment in-memory and transcribe it
         process_segments_in_memory(audio_path, speaker_segments)
-        
-        # Return the transcription as a JSON response
-        return jsonify({'transcript': speaker_transcript})
+        if not speech_segments:
+            return jsonify({'error': 'No speech detected in the audio.'}), 400
+        return jsonify({
+            'transcript': speaker_transcript,
+            'segments': speech_segments
+        })
     except Exception as e:
+        logger.error(f"Processing error: {str(e)}")
         return jsonify({'error': str(e)}), 500
     finally:
-        # Clean up the temporary file
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-    
+        clean_up(audio_path)
 
 if __name__ == "__main__":
     app.run(debug=True)

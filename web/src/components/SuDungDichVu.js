@@ -127,19 +127,19 @@ function SuDungDichVu() {
             mediaRecorder.current.onstop = async () => {
                 const recordedBlob = new Blob(chunks.current, { type: 'audio/ogg; codecs=opus' }); // Original recording
                 const wavBlob = await convertBlobToWav(recordedBlob);
-            
+
                 const wavUrl = URL.createObjectURL(wavBlob);
                 setAudioSrc(wavUrl); // Set .wav URL for playback
                 setFileName('Ghi âm của bạn'); // Name of the converted file
-            
+
                 // Send the `wavBlob` for further processing
                 transcribeAudio(wavBlob);
                 chunks.current = [];
-            };            
+            };
 
             mediaRecorder.current.start();
             setIsRecording(true);
-            
+
         } catch (error) {
             alert('Hãy bật quyền truy cập microphone để có thể sử dụng tính năng này!');
             console.error('Error accessing microphone:', error);
@@ -183,19 +183,9 @@ function SuDungDichVu() {
             <Container>
                 <Row>
                     <Col>
-                        <Row>
+                        <Row style={{ marginTop: '20px', marginBottom: '20px' }}>
                             <Col md={1}>
                                 <h6>Bước 1</h6>
-                            </Col>
-                            <Col md={5}>
-                                <h6>Tên dự án</h6>
-                                <input type="text" style={{ width: '100%', padding: '5px' }} />
-                            </Col>
-                        </Row>
-
-                        <Row style={{ marginTop: '20px' }}>
-                            <Col md={1}>
-                                <h6>Bước 2</h6>
                             </Col>
 
                             <Col md={5}>
@@ -248,7 +238,7 @@ function SuDungDichVu() {
 
                         <Row style={{ marginTop: '20px' }}>
                             <Col md={1}>
-                                <h6>Bước 3</h6>
+                                <h6>Bước 2</h6>
                             </Col>
 
                             <Col md={11}>
@@ -257,7 +247,6 @@ function SuDungDichVu() {
                                     value={transcribedText}
                                     disabled={true}
                                     rows={10}
-                                    cols={50}
                                     style={{ width: '100%', padding: '10px' }}
                                 />
                             </Col>
